@@ -67,11 +67,25 @@ retransmits (iperf3 sender) per queue length are printed and saved to
 
 ```
 txqueuelen   off Mbit/s    on Mbit/s   change  off drops   on drops   off retr    on retr
-       500          ...          ...      ...        ...        ...        ...        ...
-      5000          ...          ...      ...        ...        ...        ...        ...
+       500        14930        14961    +0.2%          0          0          0          0
+      5000        14964        14924    -0.3%          0          0          0          0
 ```
 
 `OUT` also contains `results.txt` (one line per run: mode, queue length,
 repetition, Mbit/s, TUN drops, retransmits), the iperf3 and wireguard-go
 output of each run, and `meta.txt` with kernel, wireguard-go version and
 settings.
+
+## Results
+
+AMD Ryzen 9 9950X, Linux 7.3.0-rc3, wireguard-go b3bc704 with the patch,
+default settings (8 streams, 30 s per run, 40 repetitions):
+
+| txqueuelen | off Mbit/s | on Mbit/s | change | off drops | on drops | off retr | on retr |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 500 | 14930 | 14961 | +0.2% | 0 | 0 | 0 | 0 |
+| 5000 | 14964 | 14924 | -0.3% | 0 | 0 | 0 | 0 |
+
+Throughput, drops and retransmits are means per run. No run had TUN drops
+or retransmits. Individual runs range from about 14650 to 15150 Mbit/s in
+every configuration (standard deviation 85 to 110 Mbit/s).
