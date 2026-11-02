@@ -1,0 +1,83 @@
+From 44e3f4f4da6dd1cf99e62cecc16726dd97136886 Mon Sep 17 00:00:00 2001
+From: Simon Schippers <simon.schippers@tu-dortmund.de>
+Date: Mon, 19 Oct 2026 11:14:09 +0200
+Subject: [PATCH] tun: linux: add WG_TUN_BACKPRESSURE to set IFF_BACKPRESSURE
+
+When the internal ring of a TUN device is full, the kernel silently
+drops packets, bypassing any qdisc. TCP then sees loss, retransmits and
+shrinks its congestion window.
+
+My series "tun/tap & vhost-net: apply qdisc backpressure on full
+ptr_ring to reduce TX drops" [1] adds IFF_BACKPRESSURE in Linux 7.3
+(commit d00c7369ef24 "tun/tap & vhost-net: stop tail-drop when
+IFF_BACKPRESSURE is set"). It stops the TX queue instead, so the qdisc
+holds the packets and applies its AQM and fairness.
+
+Our paper [2] evaluated this with WireGuard Go: TCP throughput improved
+significantly, especially at higher RTTs, and no retransmissions
+occurred.
+
+Unfortunately, stopping and waking the queue can reduce throughput with
+many parallel senders: in a synthetic test with eight iperf3 senders,
+throughput dropped from 13.5 to 9.13 Gbit/s [3]. The flag is therefore
+disabled by default and can be enabled by setting WG_TUN_BACKPRESSURE=1.
+
+Older kernels ignore unknown TUNSETIFF flags. Defining the flag locally
+is a workaround until x/sys/unix provides it.
+
+Tested on Linux 7.3-rc3: with WG_TUN_BACKPRESSURE=1,
+/sys/class/net/<dev>/tun_flags has IFF_BACKPRESSURE set, otherwise the
+flag stays clear. go test ./... passes.
+
+[1] https://lore.kernel.org/netdev/20260803183641.96882-1-simon.schippers@tu-dortmund.de/T/#u
+[2] https://cni.etit.tu-dortmund.de/storages/cni-etit/r/Research/Publications/2025/Gebauer_2025_VTCFall/Gebauer_VTCFall2025_AuthorsVersion.pdf
+[3] https://lore.kernel.org/netdev/akVnoOYQOrt8k-Gu@karahi.librecast.net/
+
+Assisted-by: Claude:claude-opus-5-5
+Signed-off-by: Simon Schippers <simon.schippers@tu-dortmund.de>
+---
+ README.md        | 2 +-
+ tun/tun_linux.go | 7 ++++++-
+ 2 files changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/README.md b/README.md
+index 709728d..25d2328 100644
+--- a/README.md
++++ b/README.md
+@@ -26,7 +26,7 @@ To run with more logging you may set the environment variable `LOG_LEVEL=debug`.
+ 
+ ### Linux
+ 
+-This will run on Linux; however you should instead use the kernel module, which is faster and better integrated into the OS. See the [installation page](https://www.wireguard.com/install/) for instructions.
++This will run on Linux; however you should instead use the kernel module, which is faster and better integrated into the OS. See the [installation page](https://www.wireguard.com/install/) for instructions. If the environment variable `WG_TUN_BACKPRESSURE=1` is set, the tun device is created with `IFF_BACKPRESSURE` (Linux 7.3 and later), so the kernel applies qdisc backpressure instead of dropping packets, which can reduce throughput with many parallel senders.
+ 
+ ### macOS
+ 
+diff --git a/tun/tun_linux.go b/tun/tun_linux.go
+index 1461e06..14be14f 100644
+--- a/tun/tun_linux.go
++++ b/tun/tun_linux.go
+@@ -25,6 +25,7 @@ import (
+ const (
+ 	cloneDevicePath = "/dev/net/tun"
+ 	ifReqSize       = unix.IFNAMSIZ + 64
++	iffBackpressure = 0x0080
+ )
+ 
+ type NativeTun struct {
+@@ -563,7 +564,11 @@ func CreateTUN(name string, mtu int) (Device, error) {
+ 	}
+ 	// IFF_VNET_HDR enables the "tun status hack" via routineHackListener()
+ 	// where a null write will return EINVAL indicating the TUN is up.
+-	ifr.SetUint16(unix.IFF_TUN | unix.IFF_NO_PI | unix.IFF_VNET_HDR)
++	flags := uint16(unix.IFF_TUN | unix.IFF_NO_PI | unix.IFF_VNET_HDR)
++	if os.Getenv("WG_TUN_BACKPRESSURE") == "1" {
++		flags |= iffBackpressure
++	}
++	ifr.SetUint16(flags)
+ 	err = unix.IoctlIfreq(nfd, unix.TUNSETIFF, ifr)
+ 	if err != nil {
+ 		return nil, err
+-- 
+2.43.0
+
